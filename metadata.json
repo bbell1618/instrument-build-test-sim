@@ -1,0 +1,5 @@
+{
+  "name": "Instrument Build & Test Simulator",
+  "description": "A web-based Monte Carlo simulator for manufacturing pipelines. Define stages, set failure probabilities and durations, and analyze yield and cycle time metrics.",
+  "requestFramePermissions": []
+}
