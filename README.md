@@ -42,6 +42,7 @@ instrument-build-test-sim/
     02_yield_and_cycle_time_scenarios.ipynb
   tests/
     test_simulator.py
+```
 Tech stack
 Python 3.10+
 
