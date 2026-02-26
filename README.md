@@ -1,9 +1,6 @@
 # Instrument Build & Test Pipeline Simulator
 
-Toy Python simulator for an electro-mechanical **instrument build + test pipeline**.  
-The pipeline is defined in a YAML configuration file, and the simulator runs Monte-Carlo style simulations of many units flowing through the stages, reporting yield and cycle-time metrics.
-
-The goal is to illustrate how you can reason about build/test flows, stage yields, and process improvements for complex instruments.
+Interactive web-based **Monte Carlo simulator** for electro-mechanical instrument production pipelines. Define build and test stages, configure failure rates and rework policies, then run simulations to analyze yield, cycle time, and throughput.
 
 > This is a generic demo — all numbers and stages are synthetic and not tied to any specific product.
 
@@ -11,111 +8,93 @@ The goal is to illustrate how you can reason about build/test flows, stage yield
 
 ## Features
 
-- Define a pipeline of build and test stages in a YAML file.
-- Simulate many units moving through stages with configurable failure probabilities.
-- Report:
-  - per-stage yield,
-  - overall yield,
-  - average cycle time per unit.
-- Jupyter notebooks for:
-  - visualizing the pipeline,
-  - exploring what-if scenarios (e.g., improved tests, higher/lower failure rates).
+- **Interactive pipeline editor** — add, remove, and configure stages with failure probabilities, rework toggles, and timing parameters.
+- **Monte Carlo simulation** — simulate thousands of units flowing through your pipeline using Box-Muller-transformed duration variance and probability-based failure/rework logic.
+- **Real-time analytics** — view overall yield, average cycle time, P95 cycle time, scrap rate, per-stage yield breakdowns, and cumulative throughput trends.
+- **Rich visualizations** — stage yield bar charts, cumulative throughput area charts, and cycle time distribution histograms powered by Recharts.
+- **Configuration persistence** — pipeline configs auto-save to localStorage so your work survives page refreshes.
+- **Data export** — download simulation results as CSV for further analysis.
+- **Input validation** — real-time validation prevents invalid configurations before simulation.
 
 ---
 
-## Repository structure
+## Tech Stack
 
-```text
-instrument-build-test-sim/
-  README.md
-  requirements.txt
-  config/
-    instrument_pipeline.yaml
-  src/
-    pipeline_sim/
-      __init__.py
-      models.py       # Stage, Pipeline, SimulationSettings, SimulationResult
-      simulator.py    # core simulation logic
-      reporting.py    # tables/plots for yield & cycle time
-  notebooks/
-    01_pipeline_overview.ipynb
-    02_yield_and_cycle_time_scenarios.ipynb
-  tests/
-    test_simulator.py
-```
-Tech stack
-Python 3.10+
+| Layer | Technology |
+|-------|-----------|
+| Language | TypeScript 5.8 |
+| UI Framework | React 19 |
+| Build Tool | Vite 6 |
+| Styling | Tailwind CSS |
+| Charts | Recharts 3 |
+| Icons | Lucide React |
+| Testing | Vitest |
 
-pyyaml
+---
 
-numpy, pandas
+## Getting Started
 
-matplotlib, seaborn
-
-pytest
-
-Jupyter
-
-Getting started
-1. Clone the repo
-bash
-Copy code
+```bash
+# Clone the repo
 git clone https://github.com/bbell1618/instrument-build-test-sim.git
 cd instrument-build-test-sim
-2. Create & activate a virtual environment (optional)
-bash
-Copy code
-python -m venv .venv
-source .venv/bin/activate      # Linux/macOS
-# or
-.\.venv\Scripts\activate       # Windows
-3. Install dependencies
-bash
-Copy code
-pip install -r requirements.txt
-Running a simulation
-From the repo root:
 
-bash
-Copy code
-python -m pipeline_sim.simulator
-The default run will:
+# Install dependencies
+npm install
 
-load the pipeline defined in config/instrument_pipeline.yaml,
+# Start development server
+npm run dev
+```
 
-simulate a number of units,
+The app runs at [http://localhost:3000](http://localhost:3000).
 
-print summary statistics to the console.
+---
 
-To explore in more detail, start Jupyter:
+## Project Structure
 
-bash
-Copy code
-jupyter lab   # or jupyter notebook
-and open:
+```
+instrument-build-test-sim/
+├── index.html              # HTML entry point
+├── index.tsx               # React app bootstrap
+├── App.tsx                 # Main application component
+├── types.ts                # TypeScript type definitions
+├── constants.ts            # Default pipeline configuration
+├── components/
+│   ├── ConfigEditor.tsx    # Pipeline stage configuration UI
+│   ├── ResultsView.tsx     # Simulation results & charts
+│   └── ErrorBoundary.tsx   # Graceful error handling
+├── services/
+│   └── simulator.ts        # Core Monte Carlo simulation engine
+├── __tests__/
+│   └── simulator.test.ts   # Unit tests for simulation logic
+├── package.json
+├── tsconfig.json
+└── vite.config.ts
+```
 
-notebooks/01_pipeline_overview.ipynb
+---
 
-notebooks/02_yield_and_cycle_time_scenarios.ipynb
+## How It Works
 
-These notebooks show the pipeline structure, simulate multiple scenarios, and visualize yields and cycle times with charts.
+1. **Configure** your production pipeline — each stage has a name, mean duration, failure probability, and optional rework settings.
+2. **Run** a Monte Carlo simulation with N units (100–50,000).
+3. **Analyze** results: overall yield, cycle time statistics, per-stage breakdowns, and distribution charts.
 
-Customizing the pipeline
-The YAML file config/instrument_pipeline.yaml describes the stages. Each stage includes fields like:
+The simulator uses a Box-Muller transform to generate Gaussian-distributed stage durations and simple probability rolls for pass/fail decisions. When rework is enabled, failed units get additional attempts (configurable) with time penalties before being scrapped.
 
-name
+---
 
-mean_duration_minutes
+## Scripts
 
-failure_probability
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start Vite dev server on port 3000 |
+| `npm run build` | Production build to `dist/` |
+| `npm run preview` | Preview production build |
+| `npm run test` | Run unit tests with Vitest |
 
-You can duplicate and modify this file to experiment with:
+---
 
-adding or removing stages,
+## Disclaimer
 
-changing failure rates,
-
-simulating rework loops, etc.
-
-Disclaimer
-This simulator is intentionally simplified. It’s intended as a learning and discussion tool for thinking about build/test flows and trade-offs in test coverage, yield, and throughput for complex instruments.
+This simulator is intentionally simplified. It's intended as a learning and discussion tool for thinking about build/test flows and trade-offs in test coverage, yield, and throughput for complex instruments.

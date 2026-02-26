@@ -1,7 +1,6 @@
 import { PipelineConfig, SimulationResult, StageStat, UnitResult } from '../types';
 
-// Helper to generate Gaussian random number (Box-Muller transform)
-// Used to vary duration slightly around the mean for realism
+// Box-Muller transform for Gaussian random numbers
 function gaussianRandom(mean: number, stdev: number): number {
   const u = 1 - Math.random();
   const v = Math.random();
@@ -21,7 +20,6 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
     const stageDetails: UnitResult['stageDetails'] = {};
 
     for (const stage of stages) {
-      // Skip remaining stages if already scrapped
       if (isScrap) break;
 
       let passes = 0;
@@ -29,32 +27,25 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
       let stageFailed = false;
       let completedStage = false;
 
-      // Logic: Simple pass/fail. 
-      // If reworkEnabled, we might loop. For simplicity, we allow max 1 rework attempt to avoid infinite loops in this toy model,
-      // or we can treat rework as just "adding time" and passing.
-      // Let's implement: If fail -> check rework. If rework -> add time, roll again. If fail again -> scrap.
-      
+      // If rework is enabled, allow 1 rework attempt (2 total).
+      // If rework is disabled, single attempt only.
       const maxAttempts = stage.reworkEnabled ? 2 : 1;
-      
+
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        // Base duration + some noise (10% variance)
+        // Duration with 10% Gaussian variance, floored at 0
         const runTime = Math.max(0, gaussianRandom(stage.meanDurationMinutes, stage.meanDurationMinutes * 0.1));
         durationInStage += runTime;
 
         // Roll for failure
-        const rolled = Math.random();
-        if (rolled >= stage.failureProbability) {
-          // Pass
+        if (Math.random() >= stage.failureProbability) {
           passes = attempt;
           completedStage = true;
           break;
         } else {
-          // Fail
           if (attempt < maxAttempts) {
-             // Will retry (rework), add penalty
-             durationInStage += (stage.reworkTimePenaltyMinutes || 0);
+            // Will retry — add rework time penalty
+            durationInStage += (stage.reworkTimePenaltyMinutes || 0);
           } else {
-            // Final failure for this stage
             stageFailed = true;
           }
         }
@@ -89,36 +80,26 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
   const goodUnits = totalUnits - scrappedUnits;
   const overallYield = (goodUnits / totalUnits) * 100;
 
-  // Cycle times (only for good units usually, but let's include all for "time spent" analysis, 
-  // though typically cycle time metric implies "time to produce a GOOD unit". 
-  // Let's stick to Good Units for Avg Cycle Time).
+  // Cycle times for good units
   const goodUnitTimes = unitResults.filter(u => !u.isScrap).map(u => u.totalCycleTime);
-  const avgCycleTime = goodUnitTimes.length > 0 
-    ? goodUnitTimes.reduce((a, b) => a + b, 0) / goodUnitTimes.length 
+  const avgCycleTime = goodUnitTimes.length > 0
+    ? goodUnitTimes.reduce((a, b) => a + b, 0) / goodUnitTimes.length
     : 0;
-  
+
   // P95
   goodUnitTimes.sort((a, b) => a - b);
-  const cycleTimeP95 = goodUnitTimes.length > 0 
-    ? goodUnitTimes[Math.floor(goodUnitTimes.length * 0.95)] 
+  const cycleTimeP95 = goodUnitTimes.length > 0
+    ? goodUnitTimes[Math.floor(goodUnitTimes.length * 0.95)]
     : 0;
 
   // Stage Stats
   const stageStats: StageStat[] = stages.map(stage => {
-    // Count how many units entered this stage
-    // A unit enters stage N if it didn't fail at any stage prior to N
-    // We can infer this from unitResults.
-    
-    // Units that entered = Units that have a record in stageDetails OR failed at a previous stage? 
-    // Actually, our loop logic: "Skip remaining stages if already scrapped". 
-    // So if stageDetails[stage.id] exists, it entered.
-    
     const enteredUnits = unitResults.filter(u => u.stageDetails[stage.id] !== undefined);
     const passedUnits = enteredUnits.filter(u => !u.stageDetails[stage.id].failed);
     const failedCount = enteredUnits.length - passedUnits.length;
-    
+
     const durations = enteredUnits.map(u => u.stageDetails[stage.id].duration);
-    const avgDur = durations.length > 0 ? durations.reduce((a,b)=>a+b,0)/durations.length : 0;
+    const avgDur = durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : 0;
 
     return {
       stageId: stage.id,
@@ -131,41 +112,16 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
     };
   });
 
-  // Cycle Time Distribution (Histogram)
-  const binCount = 20;
-  const maxTime = Math.max(...goodUnitTimes, 100);
-  const minTime = Math.min(...goodUnitTimes, 0);
-  const range = maxTime - minTime;
-  const binSize = range / binCount || 10;
-  
-  const histogram: Record<string, number> = {};
-  for(let i = 0; i < binCount; i++) {
-    const binLabel = Math.floor(minTime + (i * binSize)).toString();
-    histogram[binLabel] = 0;
-  }
-
-  goodUnitTimes.forEach(t => {
-    const binIndex = Math.min(Math.floor((t - minTime) / binSize), binCount - 1);
-    const binLabel = Math.floor(minTime + (binIndex * binSize)).toString();
-    if (histogram[binLabel] !== undefined) {
-      histogram[binLabel]++;
-    }
-  });
-
-  const cycleTimeDistribution = Object.entries(histogram).map(([bin, count]) => ({
-    bin,
-    count
-  })).sort((a,b) => parseInt(a.bin) - parseInt(b.bin));
+  // Cycle Time Distribution (Histogram) — use Sturges' rule for bin count
+  const cycleTimeDistribution = buildHistogram(goodUnitTimes);
 
   // Yield Trend (Cumulative)
-  // How many units survived up to stage N?
   const yieldTrend = stages.map(stage => {
-    // Units that successfully completed this stage
     const passedStageCount = unitResults.filter(u => {
-        const detail = u.stageDetails[stage.id];
-        return detail && !detail.failed;
+      const detail = u.stageDetails[stage.id];
+      return detail && !detail.failed;
     }).length;
-    
+
     return {
       stageName: stage.name,
       cumulativeYield: (passedStageCount / totalUnits) * 100
@@ -184,3 +140,28 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
     yieldTrend
   };
 };
+
+function buildHistogram(values: number[]): { bin: string; count: number }[] {
+  if (values.length === 0) return [];
+
+  // Sturges' rule: k = ceil(log2(n) + 1), clamped to [5, 30]
+  const binCount = Math.max(5, Math.min(30, Math.ceil(Math.log2(values.length) + 1)));
+
+  const minVal = values[0]; // already sorted
+  const maxVal = values[values.length - 1];
+  const range = maxVal - minVal;
+  const binSize = range / binCount || 1;
+
+  const bins: { bin: string; count: number }[] = [];
+  for (let i = 0; i < binCount; i++) {
+    const binStart = minVal + i * binSize;
+    bins.push({ bin: Math.round(binStart).toString(), count: 0 });
+  }
+
+  for (const t of values) {
+    const idx = Math.min(Math.floor((t - minVal) / binSize), binCount - 1);
+    bins[idx].count++;
+  }
+
+  return bins;
+}

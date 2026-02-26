@@ -1,7 +1,7 @@
-import React from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  LineChart, Line, AreaChart, Area
+import React, { useCallback } from 'react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area
 } from 'recharts';
 import { SimulationResult } from '../types';
 import { Download, Activity, CheckCircle, Clock } from 'lucide-react';
@@ -11,6 +11,46 @@ interface ResultsViewProps {
 }
 
 export const ResultsView: React.FC<ResultsViewProps> = ({ results }) => {
+  const handleExportCSV = useCallback(() => {
+    if (!results) return;
+
+    const lines: string[] = [];
+
+    // Summary section
+    lines.push('# Summary');
+    lines.push('Metric,Value');
+    lines.push(`Total Units,${results.totalUnits}`);
+    lines.push(`Good Units,${results.goodUnits}`);
+    lines.push(`Scrapped Units,${results.scrappedUnits}`);
+    lines.push(`Overall Yield (%),${results.overallYield.toFixed(2)}`);
+    lines.push(`Avg Cycle Time (min),${results.avgCycleTime.toFixed(2)}`);
+    lines.push(`P95 Cycle Time (min),${results.cycleTimeP95.toFixed(2)}`);
+    lines.push('');
+
+    // Stage stats
+    lines.push('# Stage Statistics');
+    lines.push('Stage,Input,Passed,Failed,Yield (%),Avg Duration (min)');
+    results.stageStats.forEach(s => {
+      lines.push(`${s.stageName},${s.inputCount},${s.passCount},${s.failCount},${s.yield.toFixed(2)},${s.avgDuration.toFixed(2)}`);
+    });
+    lines.push('');
+
+    // Cycle time distribution
+    lines.push('# Cycle Time Distribution');
+    lines.push('Bin (min),Count');
+    results.cycleTimeDistribution.forEach(d => {
+      lines.push(`${d.bin},${d.count}`);
+    });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `simulation-results-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [results]);
+
   if (!results) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 rounded-lg border-2 border-dashed border-slate-200">
@@ -23,7 +63,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ results }) => {
 
   return (
     <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
-      
+
       {/* Key Metrics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
@@ -83,7 +123,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ results }) => {
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
+
         {/* Stage Yield Chart */}
         <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex flex-col">
           <h3 className="text-sm font-bold text-slate-700 mb-4">Stage-by-Stage Yield (%)</h3>
@@ -93,7 +133,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ results }) => {
                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={true} />
                 <XAxis type="number" domain={[0, 100]} />
                 <YAxis dataKey="stageName" type="category" width={100} tick={{fontSize: 11}} />
-                <Tooltip 
+                <Tooltip
                   formatter={(value: number) => [`${value.toFixed(2)}%`, 'Yield']}
                   contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                 />
@@ -118,8 +158,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ results }) => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="stageName" tick={{fontSize: 10}} interval={0} angle={-15} textAnchor="end" height={40}/>
                 <YAxis domain={[0, 100]} />
-                <Tooltip 
-                  formatter={(value: number) => [`${value.toFixed(2)}%`, 'Cumulative Yield']} 
+                <Tooltip
+                  formatter={(value: number) => [`${value.toFixed(2)}%`, 'Cumulative Yield']}
                   contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                 />
                 <Area type="monotone" dataKey="cumulativeYield" stroke="#3b82f6" fillOpacity={1} fill="url(#colorYield)" />
@@ -130,14 +170,23 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ results }) => {
 
         {/* Cycle Time Distribution */}
         <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex flex-col lg:col-span-2">
-          <h3 className="text-sm font-bold text-slate-700 mb-4">Cycle Time Distribution (Good Units)</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-slate-700">Cycle Time Distribution (Good Units)</h3>
+            <button
+              onClick={handleExportCSV}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200 transition-colors"
+              title="Export results as CSV"
+            >
+              <Download size={14} /> Export CSV
+            </button>
+          </div>
           <div className="h-64">
              <ResponsiveContainer width="100%" height="100%">
               <BarChart data={results.cycleTimeDistribution}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="bin" name="Time (min)" tick={{fontSize: 12}} />
                 <YAxis />
-                <Tooltip 
+                <Tooltip
                   cursor={{fill: '#f1f5f9'}}
                   labelFormatter={(label) => `~${label} min`}
                   formatter={(value: number) => [value, 'Units']}

@@ -1,37 +1,73 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Play, RotateCcw, Box, FileJson } from 'lucide-react';
 import { PipelineConfig, SimulationResult } from './types';
 import { DEFAULT_PIPELINE_CONFIG } from './constants';
 import { runSimulation } from './services/simulator';
-import { ConfigEditor } from './components/ConfigEditor';
+import { ConfigEditor, getConfigErrors } from './components/ConfigEditor';
 import { ResultsView } from './components/ResultsView';
 
+const STORAGE_KEY = 'instrument-sim-config';
+
+function loadSavedConfig(): PipelineConfig {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && Array.isArray(parsed.stages) && typeof parsed.simulationCount === 'number') {
+        return parsed;
+      }
+    }
+  } catch {
+    // Corrupted data, fall back to default
+  }
+  return DEFAULT_PIPELINE_CONFIG;
+}
+
+function saveConfig(config: PipelineConfig) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  } catch {
+    // Storage full or unavailable, silently ignore
+  }
+}
+
 const App: React.FC = () => {
-  const [config, setConfig] = useState<PipelineConfig>(DEFAULT_PIPELINE_CONFIG);
+  const [config, setConfig] = useState<PipelineConfig>(loadSavedConfig);
   const [results, setResults] = useState<SimulationResult | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [showJson, setShowJson] = useState(false);
 
-  // Auto-run on first load for better UX
+  // Persist config to localStorage on change
   useEffect(() => {
-    handleRunSimulation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    saveConfig(config);
+  }, [config]);
 
-  const handleRunSimulation = async () => {
+  const validationErrors = getConfigErrors(config);
+  const canRun = validationErrors.length === 0 && config.stages.length > 0;
+
+  const handleRunSimulation = useCallback(() => {
+    if (!canRun) return;
     setIsSimulating(true);
-    // Use setTimeout to allow UI to update to "loading" state and prevent freeze on main thread for large N
-    // In a real app with huge N, we'd use a Web Worker.
+    // Use setTimeout to allow UI to update before blocking computation
     setTimeout(() => {
       const res = runSimulation(config);
       setResults(res);
       setIsSimulating(false);
-    }, 100);
-  };
+    }, 50);
+  }, [config, canRun]);
+
+  // Auto-run on first load if config is valid
+  useEffect(() => {
+    if (canRun) {
+      handleRunSimulation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleReset = () => {
     setConfig(DEFAULT_PIPELINE_CONFIG);
     setResults(null);
+    localStorage.removeItem(STORAGE_KEY);
   };
 
   return (
@@ -48,7 +84,7 @@ const App: React.FC = () => {
               <p className="text-xs text-slate-500 font-medium">Production Pipeline Monte Carlo Simulator</p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowJson(!showJson)}
@@ -67,7 +103,8 @@ const App: React.FC = () => {
             </button>
             <button
               onClick={handleRunSimulation}
-              disabled={isSimulating}
+              disabled={isSimulating || !canRun}
+              title={!canRun ? 'Fix validation errors before running' : undefined}
               className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-all shadow-sm hover:shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {isSimulating ? (
@@ -87,19 +124,19 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-hidden">
-        
+
         {/* Left Panel: Configuration */}
         <div className={`lg:col-span-4 h-full flex flex-col transition-all duration-300 ${showJson ? 'hidden lg:flex' : 'flex'}`}>
-           <ConfigEditor 
-             config={config} 
-             onConfigChange={setConfig} 
+           <ConfigEditor
+             config={config}
+             onConfigChange={setConfig}
              isSimulating={isSimulating}
            />
         </div>
 
         {/* Center/Right Panel: Visualization & Results */}
         <div className={`lg:col-span-${showJson ? '12' : '8'} h-full flex flex-col space-y-6 overflow-hidden`}>
-           
+
            {showJson && (
              <div className="bg-slate-900 text-slate-50 p-6 rounded-lg font-mono text-sm overflow-auto h-96 shadow-inner border border-slate-700">
                 <div className="flex justify-between items-center mb-4">
@@ -116,11 +153,11 @@ const App: React.FC = () => {
 
         </div>
       </main>
-      
-      {/* Footer / Description */}
+
+      {/* Footer */}
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400">
         <p>
-          Simulates the flow of units through defined stages. 
+          Simulates the flow of units through defined stages.
           Uses Box-Muller transform for duration variance and pure probability rolls for failure/rework.
           <br/>
           This is a client-side React simulation based on standard Monte Carlo methods.
