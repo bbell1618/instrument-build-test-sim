@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Play, RotateCcw, Box, FileJson } from 'lucide-react';
+import { Play, RotateCcw, Box, FileJson, Bookmark, BookmarkCheck } from 'lucide-react';
 import { PipelineConfig, SimulationResult } from './types';
 import { DEFAULT_PIPELINE_CONFIG } from './constants';
 import { runSimulation } from './services/simulator';
@@ -34,6 +34,7 @@ function saveConfig(config: PipelineConfig) {
 const App: React.FC = () => {
   const [config, setConfig] = useState<PipelineConfig>(loadSavedConfig);
   const [results, setResults] = useState<SimulationResult | null>(null);
+  const [baseline, setBaseline] = useState<SimulationResult | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [showJson, setShowJson] = useState(false);
 
@@ -48,7 +49,6 @@ const App: React.FC = () => {
   const handleRunSimulation = useCallback(() => {
     if (!canRun) return;
     setIsSimulating(true);
-    // Use setTimeout to allow UI to update before blocking computation
     setTimeout(() => {
       const res = runSimulation(config);
       setResults(res);
@@ -64,10 +64,31 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keyboard shortcut: Ctrl+Enter or Cmd+Enter to run simulation
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleRunSimulation();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleRunSimulation]);
+
   const handleReset = () => {
     setConfig(DEFAULT_PIPELINE_CONFIG);
     setResults(null);
+    setBaseline(null);
     localStorage.removeItem(STORAGE_KEY);
+  };
+
+  const handleSetBaseline = () => {
+    if (baseline) {
+      setBaseline(null);
+    } else if (results) {
+      setBaseline(results);
+    }
   };
 
   return (
@@ -85,7 +106,15 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSetBaseline}
+              disabled={!results && !baseline}
+              className={`p-2 rounded-lg transition-colors ${baseline ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-slate-500 hover:bg-slate-100'} disabled:opacity-30`}
+              title={baseline ? 'Clear baseline comparison' : 'Set current results as baseline for comparison'}
+            >
+              {baseline ? <BookmarkCheck size={20} /> : <Bookmark size={20} />}
+            </button>
             <button
               onClick={() => setShowJson(!showJson)}
               className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
@@ -104,7 +133,7 @@ const App: React.FC = () => {
             <button
               onClick={handleRunSimulation}
               disabled={isSimulating || !canRun}
-              title={!canRun ? 'Fix validation errors before running' : undefined}
+              title={!canRun ? 'Fix validation errors before running' : 'Run simulation (Ctrl+Enter)'}
               className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-all shadow-sm hover:shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {isSimulating ? (
@@ -114,12 +143,20 @@ const App: React.FC = () => {
                  </>
               ) : (
                 <>
-                  <Play size={16} fill="currentColor" /> Run Simulation
+                  <Play size={16} fill="currentColor" /> Run
                 </>
               )}
             </button>
           </div>
         </div>
+        {baseline && (
+          <div className="max-w-7xl mx-auto mt-2">
+            <div className="text-[11px] text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-1 inline-flex items-center gap-1.5">
+              <BookmarkCheck size={12} />
+              Comparing against baseline ({baseline.overallYield.toFixed(1)}% yield, {baseline.avgCycleTime.toFixed(0)} min avg)
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Content */}
@@ -148,7 +185,7 @@ const App: React.FC = () => {
            )}
 
            {!showJson && (
-             <ResultsView results={results} />
+             <ResultsView results={results} baseline={baseline} />
            )}
 
         </div>
@@ -159,8 +196,8 @@ const App: React.FC = () => {
         <p>
           Simulates the flow of units through defined stages.
           Uses Box-Muller transform for duration variance and pure probability rolls for failure/rework.
-          <br/>
-          This is a client-side React simulation based on standard Monte Carlo methods.
+          <span className="mx-2">&middot;</span>
+          <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-[10px] font-mono">Ctrl+Enter</kbd> to run
         </p>
       </footer>
     </div>

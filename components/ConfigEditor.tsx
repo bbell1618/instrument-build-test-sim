@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { PipelineConfig, StageConfig } from '../types';
-import { Trash2, Plus, AlertCircle, AlertTriangle } from 'lucide-react';
+import { Trash2, Plus, AlertCircle, AlertTriangle, ChevronUp, ChevronDown, Upload, Download } from 'lucide-react';
 
 interface ConfigEditorProps {
   config: PipelineConfig;
@@ -39,6 +39,7 @@ export function getConfigErrors(config: PipelineConfig): ValidationError[] {
 
 export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onConfigChange, isSimulating }) => {
   const validationErrors = useMemo(() => validateConfig(config), [config]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getFieldError = (stageIndex: number, field: string): string | undefined => {
     return validationErrors.find(e => e.stageIndex === stageIndex && e.field === field)?.message;
@@ -55,6 +56,14 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onConfigChan
     onConfigChange({ ...config, stages: newStages });
   };
 
+  const moveStage = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= config.stages.length) return;
+    const newStages = [...config.stages];
+    [newStages[index], newStages[target]] = [newStages[target], newStages[index]];
+    onConfigChange({ ...config, stages: newStages });
+  };
+
   const addStage = () => {
     const newStage: StageConfig = {
       id: `s${Date.now()}`,
@@ -67,22 +76,78 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onConfigChan
     onConfigChange({ ...config, stages: [...config.stages, newStage] });
   };
 
+  const handleExportConfig = () => {
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'pipeline-config.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string);
+        if (parsed && Array.isArray(parsed.stages) && typeof parsed.simulationCount === 'number') {
+          onConfigChange(parsed);
+        }
+      } catch {
+        // Invalid JSON, ignore
+      }
+    };
+    reader.readAsText(file);
+    // Reset input so the same file can be re-imported
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-slate-200 h-full flex flex-col">
-      <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-        <h2 className="font-semibold text-slate-800 flex items-center gap-2">
-          Pipeline Configuration
-        </h2>
-        <div className="flex items-center gap-2">
-          {validationErrors.length > 0 && (
-            <div className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded flex items-center gap-1" title={`${validationErrors.length} validation issue(s)`}>
-              <AlertTriangle size={12} />
-              {validationErrors.length}
+      <div className="p-4 border-b border-slate-100 bg-slate-50">
+        <div className="flex justify-between items-center mb-2">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+            Pipeline Configuration
+          </h2>
+          <div className="flex items-center gap-2">
+            {validationErrors.length > 0 && (
+              <div className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded flex items-center gap-1" title={`${validationErrors.length} validation issue(s)`}>
+                <AlertTriangle size={12} />
+                {validationErrors.length}
+              </div>
+            )}
+            <div className="text-xs text-slate-500 bg-slate-200 px-2 py-1 rounded">
+              {config.stages.length} Stages
             </div>
-          )}
-          <div className="text-xs text-slate-500 bg-slate-200 px-2 py-1 rounded">
-            {config.stages.length} Stages
           </div>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={handleExportConfig}
+            disabled={isSimulating}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-slate-500 bg-white border border-slate-200 rounded hover:bg-slate-50 transition-colors disabled:opacity-50"
+            title="Export pipeline config as JSON"
+          >
+            <Download size={12} /> Export
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isSimulating}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-slate-500 bg-white border border-slate-200 rounded hover:bg-slate-50 transition-colors disabled:opacity-50"
+            title="Import pipeline config from JSON"
+          >
+            <Upload size={12} /> Import
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleImportConfig}
+            className="hidden"
+          />
         </div>
       </div>
 
@@ -104,14 +169,33 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onConfigChan
 
           return (
             <div key={stage.id} className={`border rounded-lg p-4 bg-white shadow-sm relative group transition-all hover:shadow-md ${hasErrors ? 'border-amber-300 hover:border-amber-400' : 'border-slate-200 hover:border-blue-300'}`}>
-              <button
-                onClick={() => removeStage(idx)}
-                disabled={isSimulating}
-                className="absolute top-2 right-2 p-1 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0"
-                title="Remove Stage"
-              >
-                <Trash2 size={16} />
-              </button>
+              {/* Stage controls: reorder + delete */}
+              <div className="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={() => moveStage(idx, -1)}
+                  disabled={isSimulating || idx === 0}
+                  className="p-1 text-slate-400 hover:text-blue-500 disabled:opacity-30 disabled:hover:text-slate-400"
+                  title="Move up"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  onClick={() => moveStage(idx, 1)}
+                  disabled={isSimulating || idx === config.stages.length - 1}
+                  className="p-1 text-slate-400 hover:text-blue-500 disabled:opacity-30 disabled:hover:text-slate-400"
+                  title="Move down"
+                >
+                  <ChevronDown size={14} />
+                </button>
+                <button
+                  onClick={() => removeStage(idx)}
+                  disabled={isSimulating}
+                  className="p-1 text-slate-400 hover:text-red-500 disabled:opacity-0"
+                  title="Remove Stage"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="col-span-1 md:col-span-2">

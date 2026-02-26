@@ -1,4 +1,4 @@
-import { PipelineConfig, SimulationResult, StageStat, UnitResult } from '../types';
+import { PipelineConfig, SimulationResult, StageStat, UnitResult, CycleTimeStats, BottleneckAnalysis } from '../types';
 
 // Box-Muller transform for Gaussian random numbers
 function gaussianRandom(mean: number, stdev: number): number {
@@ -27,23 +27,18 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
       let stageFailed = false;
       let completedStage = false;
 
-      // If rework is enabled, allow 1 rework attempt (2 total).
-      // If rework is disabled, single attempt only.
       const maxAttempts = stage.reworkEnabled ? 2 : 1;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        // Duration with 10% Gaussian variance, floored at 0
         const runTime = Math.max(0, gaussianRandom(stage.meanDurationMinutes, stage.meanDurationMinutes * 0.1));
         durationInStage += runTime;
 
-        // Roll for failure
         if (Math.random() >= stage.failureProbability) {
           passes = attempt;
           completedStage = true;
           break;
         } else {
           if (attempt < maxAttempts) {
-            // Will retry — add rework time penalty
             durationInStage += (stage.reworkTimePenaltyMinutes || 0);
           } else {
             stageFailed = true;
@@ -80,17 +75,10 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
   const goodUnits = totalUnits - scrappedUnits;
   const overallYield = (goodUnits / totalUnits) * 100;
 
-  // Cycle times for good units
+  // Cycle time stats (good units only)
   const goodUnitTimes = unitResults.filter(u => !u.isScrap).map(u => u.totalCycleTime);
-  const avgCycleTime = goodUnitTimes.length > 0
-    ? goodUnitTimes.reduce((a, b) => a + b, 0) / goodUnitTimes.length
-    : 0;
-
-  // P95
   goodUnitTimes.sort((a, b) => a - b);
-  const cycleTimeP95 = goodUnitTimes.length > 0
-    ? goodUnitTimes[Math.floor(goodUnitTimes.length * 0.95)]
-    : 0;
+  const cycleTimeStats = computeCycleTimeStats(goodUnitTimes);
 
   // Stage Stats
   const stageStats: StageStat[] = stages.map(stage => {
@@ -112,7 +100,10 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
     };
   });
 
-  // Cycle Time Distribution (Histogram) — use Sturges' rule for bin count
+  // Bottleneck analysis
+  const bottleneck = computeBottleneck(stageStats, cycleTimeStats.avg);
+
+  // Cycle Time Distribution (Histogram)
   const cycleTimeDistribution = buildHistogram(goodUnitTimes);
 
   // Yield Trend (Cumulative)
@@ -133,21 +124,80 @@ export const runSimulation = (config: PipelineConfig): SimulationResult => {
     goodUnits,
     scrappedUnits,
     overallYield,
-    avgCycleTime,
-    cycleTimeP95,
+    avgCycleTime: cycleTimeStats.avg,
+    cycleTimeP95: cycleTimeStats.p95,
+    cycleTimeStats,
+    bottleneck,
     stageStats,
     cycleTimeDistribution,
     yieldTrend
   };
 };
 
+function computeCycleTimeStats(sortedTimes: number[]): CycleTimeStats {
+  if (sortedTimes.length === 0) {
+    return { avg: 0, median: 0, stddev: 0, min: 0, max: 0, p95: 0 };
+  }
+
+  const n = sortedTimes.length;
+  const sum = sortedTimes.reduce((a, b) => a + b, 0);
+  const avg = sum / n;
+
+  const median = n % 2 === 0
+    ? (sortedTimes[n / 2 - 1] + sortedTimes[n / 2]) / 2
+    : sortedTimes[Math.floor(n / 2)];
+
+  const variance = sortedTimes.reduce((acc, t) => acc + (t - avg) ** 2, 0) / n;
+  const stddev = Math.sqrt(variance);
+
+  return {
+    avg,
+    median,
+    stddev,
+    min: sortedTimes[0],
+    max: sortedTimes[n - 1],
+    p95: sortedTimes[Math.floor(n * 0.95)]
+  };
+}
+
+function computeBottleneck(stageStats: StageStat[], avgTotalCycleTime: number): BottleneckAnalysis {
+  if (stageStats.length === 0) {
+    return { yieldBottleneck: null, timeBottleneck: null };
+  }
+
+  // Yield bottleneck: stage with the lowest yield (most failures)
+  const worstYield = stageStats.reduce((worst, s) =>
+    s.yield < worst.yield ? s : worst
+  , stageStats[0]);
+
+  const yieldBottleneck = worstYield.failCount > 0 ? {
+    stageName: worstYield.stageName,
+    stageId: worstYield.stageId,
+    yield: worstYield.yield,
+    unitsLost: worstYield.failCount,
+  } : null;
+
+  // Time bottleneck: stage consuming the most time
+  const slowest = stageStats.reduce((worst, s) =>
+    s.avgDuration > worst.avgDuration ? s : worst
+  , stageStats[0]);
+
+  const timeBottleneck = avgTotalCycleTime > 0 ? {
+    stageName: slowest.stageName,
+    stageId: slowest.stageId,
+    avgDuration: slowest.avgDuration,
+    pctOfTotal: (slowest.avgDuration / avgTotalCycleTime) * 100,
+  } : null;
+
+  return { yieldBottleneck, timeBottleneck };
+}
+
 function buildHistogram(values: number[]): { bin: string; count: number }[] {
   if (values.length === 0) return [];
 
-  // Sturges' rule: k = ceil(log2(n) + 1), clamped to [5, 30]
   const binCount = Math.max(5, Math.min(30, Math.ceil(Math.log2(values.length) + 1)));
 
-  const minVal = values[0]; // already sorted
+  const minVal = values[0];
   const maxVal = values[values.length - 1];
   const range = maxVal - minVal;
   const binSize = range / binCount || 1;
